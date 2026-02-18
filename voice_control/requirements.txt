@@ -1,0 +1,11 @@
+faster-whisper>=1.0.0
+piper-tts>=1.2.0
+webrtcvad>=2.0.10
+ollama>=0.3.0
+pyyaml>=6.0
+numpy>=1.24
+sounddevice>=0.4.6
+scipy>=1.11.0
+onnxruntime>=1.15.0
+fastapi>=0.111.0
+uvicorn>=0.29.0

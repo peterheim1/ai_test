@@ -57,6 +57,7 @@ class RobbieVoiceServer:
         self._llm: LLMClient | None = None
         self._classifier: IntentClassifier | None = None
         self._dispatcher: ROS2Dispatcher | None = None
+        self._web = None
 
         # Config file paths
         self._intents_path = str(config_dir / "intents.yaml")
@@ -135,18 +136,52 @@ class RobbieVoiceServer:
         )
         self.console.log_info("Intent classifier loaded")
 
-        # 7. TCP audio connection (replaces ESPHome)
+        # 7. Audio input (local mic or TCP/ESP32)
+        audio_source = self.config.get("audio_source", "tcp")
         tcp_cfg = self.config.get("tcp_audio", {})
-        self._esphome = TCPAudioClient(
-            listen_host=tcp_cfg.get("listen_host", "0.0.0.0"),
-            listen_port=tcp_cfg.get("listen_port", 8765),
-            wake_word_model=tcp_cfg.get("wake_word_model", "hey_jarvis"),
-            wake_word_threshold=tcp_cfg.get("wake_word_threshold", 0.5),
-        )
-        self._esphome.on_wake_word = self._on_wake_word
 
-        self.console.log_info(f"Starting TCP audio server on {tcp_cfg.get('listen_host', '0.0.0.0')}:{tcp_cfg.get('listen_port', 8765)}...")
+        if audio_source == "push_to_talk":
+            from voice_control.local_mic_client import PushToTalkClient
+            mic_cfg = self.config.get("local_mic", {})
+            self._esphome = PushToTalkClient(
+                device=mic_cfg.get("device"),
+                tts_device=mic_cfg.get("tts_device"),
+                tts_sample_rate=self.config.get("tts", {}).get("output_sample_rate", 22050),
+            )
+            self.console.log_info("Using push-to-talk input (press ENTER to speak)")
+        elif audio_source == "local_mic":
+            from voice_control.local_mic_client import LocalMicClient
+            mic_cfg = self.config.get("local_mic", {})
+            self._esphome = LocalMicClient(
+                device=mic_cfg.get("device"),
+                wake_word_model=mic_cfg.get("wake_word_model", "hey_jarvis"),
+                wake_word_threshold=mic_cfg.get("wake_word_threshold", 0.85),
+                tts_device=mic_cfg.get("tts_device"),
+                tts_sample_rate=self.config.get("tts", {}).get("output_sample_rate", 22050),
+            )
+            self.console.log_info("Using local microphone input")
+        else:
+            self._esphome = TCPAudioClient(
+                listen_host=tcp_cfg.get("listen_host", "0.0.0.0"),
+                listen_port=tcp_cfg.get("listen_port", 8765),
+                wake_word_model=tcp_cfg.get("wake_word_model", "hey_jarvis"),
+                wake_word_threshold=tcp_cfg.get("wake_word_threshold", 0.5),
+            )
+            self.console.log_info(f"Starting TCP audio server on {tcp_cfg.get('listen_host', '0.0.0.0')}:{tcp_cfg.get('listen_port', 8765)}...")
+
+        self._esphome.on_wake_word = self._on_wake_word
         await self._esphome.connect()
+
+        # 8. Web interface
+        web_cfg = self.config.get("web", {})
+        if web_cfg.get("enabled", True):
+            from voice_control.web_server import WebServer
+            self._web = WebServer(
+                host=web_cfg.get("host", "0.0.0.0"),
+                port=web_cfg.get("port", 8080),
+            )
+            await self._web.start(self)
+            self.console.log_info(f"Web interface at http://0.0.0.0:{web_cfg.get('port', 8080)}")
 
         self.console.log_info("Robbie Voice Server ready")
         self.console.log_end()
@@ -155,10 +190,22 @@ class RobbieVoiceServer:
         """Called when ESP32 detects the wake word."""
         self.console.log_wake()
         loop = asyncio.get_event_loop()
-        # Send LED wake (magenta) + chime trigger
         loop.create_task(self._esphome.send_led_state(LED_WAKE))
-        # Schedule the pipeline handling
         loop.create_task(self._handle_pipeline())
+
+    async def publish_event(self, event: dict):
+        """Broadcast a pipeline event to all web UI clients."""
+        if self._web:
+            await self._web.broadcast(event)
+
+    async def handle_text_command(self, text: str):
+        """Inject a text command directly into the pipeline, bypassing wake word and STT."""
+        self.console.log_info(f"[WEB] {text}")
+        await self.publish_event({"type": "status", "state": "processing"})
+        await self._esphome.send_led_state(LED_THINKING)
+        await self._process_text(text, source="web")
+        await self._esphome.send_led_state(LED_IDLE)
+        await self.publish_event({"type": "status", "state": "listening"})
 
     async def _handle_pipeline(self):
         """Handle a complete voice pipeline: audio → STT → intent → dispatch → TTS."""
@@ -166,6 +213,8 @@ class RobbieVoiceServer:
         vad_cfg = self.config.get("vad", {})
         max_duration = vad_cfg.get("max_duration_ms", 5000) / 1000.0
         stop_check_secs = self.config.get("stop_detector", {}).get("max_audio_seconds", 0.5)
+
+        await self.publish_event({"type": "status", "state": "recording"})
 
         # Wait briefly for initial audio to arrive for stop check
         await asyncio.sleep(stop_check_secs + 0.1)
@@ -182,23 +231,26 @@ class RobbieVoiceServer:
                 self.console.log_fast_stop()
                 self._dispatcher.publish_stop()
                 self.console.log_publish(["/voice/stop", "/cmd_vel", "/drive"])
-                # Send short TTS response
+                await self.publish_event({"type": "intent", "name": "stop_all", "params": {}, "response": "stopping"})
                 await self._speak("stopping")
                 await self._esphome.send_led_state(LED_IDLE)
+                await self.publish_event({"type": "status", "state": "listening"})
                 self.console.log_end()
                 return
 
         # Wait for full audio
         audio = await self._esphome.wait_for_audio(timeout=max_duration)
 
-        if not audio or len(audio) < 1600:  # less than 0.05s of audio
+        if not audio or len(audio) < 1600:
             self.console.log_error("No audio received")
+            await self.publish_event({"type": "log", "level": "error", "msg": "No audio received"})
             await self._esphome.send_led_state(LED_IDLE)
+            await self.publish_event({"type": "status", "state": "listening"})
             self.console.log_end()
             return
 
-        # LED → thinking (yellow) before STT
         await self._esphome.send_led_state(LED_THINKING)
+        await self.publish_event({"type": "status", "state": "processing"})
 
         # Full STT transcription
         text = await loop.run_in_executor(
@@ -206,15 +258,31 @@ class RobbieVoiceServer:
         )
         self.console.log_utterance(text)
 
+        await self._process_text(text, source="voice")
+
+        await self._esphome.send_led_state(LED_IDLE)
+        await self.publish_event({"type": "status", "state": "listening"})
+        self.console.log_end()
+
+    async def _process_text(self, text: str, source: str = "voice"):
+        """Classify and dispatch a transcribed or injected text command."""
+        loop = asyncio.get_event_loop()
+
+        await self.publish_event({"type": "transcript", "text": text, "source": source})
+
         if not text:
             await self._speak("I didn't catch that")
-            await self._esphome.send_led_state(LED_IDLE)
-            self.console.log_end()
             return
 
         # Classify intent
         intent = self._classifier.classify(text)
         self.console.log_intent(intent.name, intent.params)
+        await self.publish_event({
+            "type": "intent",
+            "name": intent.name,
+            "params": intent.params,
+            "response": intent.response_text,
+        })
 
         # Dispatch to ROS 2
         self._dispatcher.publish_intent(intent)
@@ -229,19 +297,26 @@ class RobbieVoiceServer:
             ])
         self.console.log_publish(published_topics)
 
-        # Generate response
+        # Generate and speak response
         response_text = await self._generate_response(intent)
-
-        # Speak response
         if response_text:
             await self._speak(response_text)
 
-        await self._esphome.send_led_state(LED_IDLE)
-        self.console.log_end()
-
     async def _generate_response(self, intent) -> str:
         """Generate the text response for an intent."""
+        from datetime import datetime
         loop = asyncio.get_event_loop()
+
+        if intent.name == "query_datetime":
+            now = datetime.now()
+            hour = now.strftime("%I").lstrip("0")
+            minute = now.strftime("%M")
+            ampm = now.strftime("%p").lower()
+            day = now.strftime("%A")
+            date = now.strftime("%-d %B")
+            if "date" in intent.utterance.lower() or "day" in intent.utterance.lower() or "today" in intent.utterance.lower():
+                return f"today is {day} the {date}"
+            return f"it's {hour} {minute} {ampm}"
 
         if intent.name == "general_question":
             question = intent.params.get("original", intent.utterance)
@@ -281,9 +356,13 @@ class RobbieVoiceServer:
         return f"I don't have {subject} information right now"
 
     async def _speak(self, text: str):
-        """Synthesize and send TTS audio to ESP32."""
+        """Synthesize and play TTS audio (skipped if silent mode is on)."""
         loop = asyncio.get_event_loop()
         self.console.log_response(text)
+        muted = self._web is not None and self._web.tts_muted
+        await self.publish_event({"type": "tts", "text": text, "muted": muted})
+        if muted:
+            return
         try:
             audio = await loop.run_in_executor(
                 self._executor, self._tts.synthesize, text
@@ -292,6 +371,7 @@ class RobbieVoiceServer:
                 await self._esphome.send_tts_audio(audio)
         except Exception as e:
             self.console.log_error(f"TTS failed: {e}")
+            await self.publish_event({"type": "log", "level": "error", "msg": f"TTS failed: {e}"})
 
     async def run(self):
         """Main run loop."""

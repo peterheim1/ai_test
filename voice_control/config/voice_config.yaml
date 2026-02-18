@@ -1,0 +1,61 @@
+# Robbie Voice Control - Server Configuration
+
+# Audio source: "local_mic" for desktop mic, "tcp" for ESP32 over WiFi
+audio_source: "local_mic"
+
+local_mic:
+  device: null                # null = PipeWire/PulseAudio default (AM4137 USB mic)
+  tts_device: null            # null = default output device
+  wake_word_model: "hey_jarvis"
+  wake_word_threshold: 0.85   # matches working example
+
+tcp_audio:
+  listen_host: "0.0.0.0"
+  listen_port: 8765
+  wake_word_model: "hey_jarvis"
+  wake_word_threshold: 0.5
+
+stt:
+  model: "small"                  # faster-whisper model: tiny, base, small, medium
+  language: "en"
+  device: "cuda"                  # cuda or cpu
+
+stop_detector:
+  model: "tiny"                   # fast model for stop keyword spotting
+  keywords: ["stop", "halt", "freeze", "emergency"]
+  max_audio_seconds: 0.5          # check first N seconds of audio
+
+tts:
+  model: "en_GB-alan-medium"      # British male voice (Jarvis-like)
+  speaker_id: null
+  output_sample_rate: 22050
+
+llm:
+  model: "mistral"                # Ollama model name
+  host: "http://localhost:11434"
+  system_prompt: |
+    You are Robbie, a helpful robot assistant.
+    Give brief, conversational answers (1-2 sentences max).
+    If you don't know, say so.
+  max_tokens: 100
+
+vad:
+  silence_threshold_ms: 1500      # silence duration to end recording
+  max_duration_ms: 5000           # hard timeout per utterance
+  aggressiveness: 3               # webrtcvad aggressiveness 0-3
+
+web:
+  enabled: true
+  host: "0.0.0.0"          # listen on all interfaces (LAN accessible)
+  port: 8090
+  tts_muted_default: false  # start with audio on
+
+ros2:
+  node_name: "robbie_voice"
+  topics:
+    intent: "/voice/intent"
+    stop: "/voice/stop"
+    tts_text: "/voice/tts_text"
+    cmd_vel: "/cmd_vel"
+    drive: "/drive"
+    head_position: "/head/position"

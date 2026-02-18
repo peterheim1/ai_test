@@ -78,3 +78,30 @@ The `agents/` directory contains a script and template for creating persistent U
 # Install the CH340/CH9102 udev rule
 ./agents/install_udev_rule.sh
 ```
+
+## Voice Control System
+
+The `voice_control/` directory contains a complete voice pipeline for the robot.
+
+**Status**: Working on desktop (AM4137 USB mic). Ready to deploy to robot.
+
+**Quick start:**
+```bash
+~/ai_projects/voice_control/start.sh
+# Say "hey Jarvis" then a command
+```
+
+**Full setup and status**: see `voice_control/status.md`
+
+**Pipeline**: USB mic → openwakeword (hey_jarvis) → Faster-Whisper STT → intent classifier → ROS 2 → Piper TTS
+
+**Key config**: `voice_control/config/voice_config.yaml`
+- `audio_source`: `local_mic` (USB mic) or `tcp` (ReSpeaker Lite over WiFi)
+- `stt.device`: `cuda` on GPU desktop, `cpu` on robot i7
+- `stt.model`: `small` on GPU, `tiny` on CPU for speed
+- TTS voice: `en_GB-alan-medium` (British male, Jarvis-like)
+
+**Audio capture (important):**
+- Capture at 16kHz natively via sounddevice — do NOT resample manually
+- Pass raw int16 to openwakeword `predict()` — not float32
+- Block size 1024 samples, threshold 0.85

@@ -1,0 +1,144 @@
+# Robbie Voice Control - Intent Definitions
+# Intents are checked in order; first match wins.
+
+intents:
+  stop_all:
+    priority: 1
+    patterns:
+      - "^stop$"
+      - "^halt$"
+      - "^freeze$"
+      - "stop everything"
+      - "emergency stop"
+    params: {}
+    response: "stopping"
+
+  look:
+    priority: 2
+    patterns:
+      - "look\\s+(left|right|up|down|forward|straight|ahead|front)"
+      - "turn\\s+(?:your\\s+)?head\\s+(left|right|up|down)"
+      - "look\\s+straight\\s+ahead"
+    params:
+      direction:
+        extract_from: "match_group_1"
+        synonyms:
+          straight: "forward"
+          ahead: "forward"
+          front: "forward"
+    response: "looking {direction}"
+
+  goto:
+    priority: 3
+    patterns:
+      - "(?:go|navigate|move|drive)\\s+to\\s+(?:the\\s+)?(.+)"
+    params:
+      location:
+        extract_from: "match_group_1"
+        resolve_from: "locations"
+    response: "navigating to {location}"
+
+  point_to:
+    priority: 4
+    patterns:
+      - "point\\s+(?:at|to|towards)\\s+(?:the\\s+)?(.+)"
+    params:
+      target:
+        extract_from: "match_group_1"
+    response: "pointing at {target}"
+
+  dock:
+    priority: 5
+    patterns:
+      - "^dock$"
+      - "go\\s+dock"
+      - "start\\s+docking"
+      - "go\\s+charge"
+    params: {}
+    response: "docking"
+
+  undock:
+    priority: 6
+    patterns:
+      - "^undock$"
+      - "leave\\s+(?:the\\s+)?dock"
+      - "undock\\s+yourself"
+    params: {}
+    response: "undocking"
+
+  cal:
+    priority: 7
+    patterns:
+      - "^calibrate$"
+      - "^reset$"
+      - "^cal$"
+    params: {}
+    response: "resetting the steppers"
+
+  query_datetime:
+    priority: 8
+    patterns:
+      - "what(?:'s|\\s+is)\\s+(?:the\\s+)?time"
+      - "what\\s+time\\s+is\\s+it"
+      - "do\\s+you\\s+know\\s+(?:the\\s+)?time"
+      - "what(?:'s|\\s+is)\\s+(?:the\\s+)?date"
+      - "what\\s+day\\s+is\\s+(?:it|today)"
+      - "what(?:'s|\\s+is)\\s+today"
+    params: {}
+    response: null
+
+  query_status:
+    priority: 9
+    patterns:
+      - "(?:what|how).*(?:battery|charge|power)"
+      - "(?:any|are\\s+there)\\s+errors?"
+      - "(?:what|which)\\s+room"
+      - "(?:are\\s+you|am\\s+i)\\s+docked"
+      - "how\\s+are\\s+you"
+      - "list\\s+nodes"
+      - "what\\s+nodes"
+    params:
+      subject:
+        detect_from_keywords:
+          battery: ["battery", "charge", "power"]
+          errors: ["error", "fault", "problem"]
+          nodes: ["node", "nodes"]
+          room: ["room", "where"]
+          dock: ["dock", "docked"]
+          general: []
+    response: null
+
+  list_topics:
+    priority: 10
+    patterns:
+      - "(?:list|show|what)\\s+topics?"
+      - "what\\s+topics?\\s+(?:are\\s+there|exist)"
+    params: {}
+    response: null
+
+  list_node_params:
+    priority: 11
+    patterns:
+      - "(?:show|list|what)\\s+param(?:eter)?s?\\s+(?:for|of)\\s+(\\w+)"
+      - "what\\s+params?\\s+does\\s+(\\w+)\\s+have"
+    params:
+      node_name:
+        extract_from: "match_group_1"
+    response: null
+
+  general_question:
+    priority: 98
+    detect_as_question: true
+    question_starters: ["what", "who", "where", "when", "why", "how", "tell", "can", "do", "is", "are"]
+    params:
+      original:
+        extract_from: "full_text"
+    response: null
+
+  unknown:
+    priority: 99
+    catch_all: true
+    params:
+      original:
+        extract_from: "full_text"
+    response: "I heard '{utterance}' but I don't know that command"

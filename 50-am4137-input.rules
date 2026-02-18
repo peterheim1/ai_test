@@ -1,0 +1,2 @@
+# AM4137 USB microphone - allow input group to read mute button events
+SUBSYSTEM=="input", ATTRS{idVendor}=="0c76", ATTRS{idProduct}=="162a", MODE="0664", GROUP="input"
