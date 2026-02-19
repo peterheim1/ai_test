@@ -136,6 +136,14 @@ class IntentClassifier:
         elif name == "list_node_params":
             params["node_name"] = match.group(1).strip() if match.lastindex else ""
 
+        elif name == "run_task":
+            task_name = match.group(1).strip() if match.lastindex else ""
+            params["task_name"] = task_name
+            response = (response or "").replace("{task_name}", task_name)
+
+        elif name == "list_tasks":
+            pass  # no params needed — handled in voice server
+
         return Intent(
             name=name,
             utterance=text,

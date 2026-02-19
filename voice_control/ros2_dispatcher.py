@@ -1,5 +1,6 @@
 """ROS 2 topic publisher for voice command dispatch."""
 
+import asyncio
 import json
 import threading
 from datetime import datetime
@@ -17,6 +18,8 @@ class ROS2Dispatcher:
 
     Runs rclpy in a background daemon thread. Publisher methods are
     thread-safe and can be called from asyncio.
+
+    Subscribes to /voice/speak so external nodes can request TTS output.
     """
 
     def __init__(self, node_name: str = "robbie_voice", topic_config: dict | None = None):
@@ -25,6 +28,7 @@ class ROS2Dispatcher:
             "intent": topics.get("intent", "/voice/intent"),
             "stop": topics.get("stop", "/voice/stop"),
             "tts_text": topics.get("tts_text", "/voice/tts_text"),
+            "speak": topics.get("speak", "/voice/speak"),
             "cmd_vel": topics.get("cmd_vel", "/cmd_vel"),
             "drive": topics.get("drive", "/drive"),
             "head_position": topics.get("head_position", "/head/position"),
@@ -47,6 +51,12 @@ class ROS2Dispatcher:
         self._pub_head = self._node.create_publisher(
             Float64MultiArray, self._topic_names["head_position"], 10)
 
+        # Subscriber: /voice/speak — external nodes request TTS output
+        self._speak_callback = None   # async coroutine to call
+        self._speak_loop: asyncio.AbstractEventLoop | None = None
+        self._sub_speak = self._node.create_subscription(
+            String, self._topic_names["speak"], self._on_speak_msg, 10)
+
         # Cached state from subscribers
         self._battery_percentage: float | None = None
         self._is_docked: bool | None = None
@@ -61,6 +71,25 @@ class ROS2Dispatcher:
             rclpy.spin(self._node)
         except Exception:
             pass
+
+    def set_speak_callback(self, callback, loop: asyncio.AbstractEventLoop):
+        """Register the async TTS callback invoked when /voice/speak is received.
+
+        Args:
+            callback: async coroutine function that accepts a text string.
+            loop:     the running asyncio event loop from the voice server.
+        """
+        self._speak_callback = callback
+        self._speak_loop = loop
+
+    def _on_speak_msg(self, msg: String):
+        """Called from the rclpy spin thread when /voice/speak is published."""
+        text = msg.data.strip()
+        if not text or not self._speak_callback or not self._speak_loop:
+            return
+        asyncio.run_coroutine_threadsafe(
+            self._speak_callback(text), self._speak_loop
+        )
 
     def publish_intent(self, intent: Intent):
         """Publish a JSON-encoded intent to /voice/intent and action-specific topics."""

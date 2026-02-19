@@ -50,12 +50,16 @@ web:
   port: 8090
   tts_muted_default: false  # start with audio on
 
+tasks:
+  dir: "/home/peter/ros2_ws/src/robbie/scripts"   # directory containing *.txt task files
+
 ros2:
   node_name: "robbie_voice"
   topics:
     intent: "/voice/intent"
     stop: "/voice/stop"
     tts_text: "/voice/tts_text"
+    speak: "/voice/speak"        # Subscribe: external nodes publish String here to trigger TTS
     cmd_vel: "/cmd_vel"
     drive: "/drive"
     head_position: "/head/position"

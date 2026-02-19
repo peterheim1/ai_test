@@ -30,6 +30,20 @@ _HTML = """<!DOCTYPE html>
     body{background:#0d1117;color:#e6edf3;font-family:'Courier New',monospace;font-size:14px}
     header{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;
            padding:12px 16px;background:#161b22;border-bottom:1px solid #30363d}
+    .page-wrap{display:flex;gap:0;align-items:flex-start}
+    .tasks-panel{width:196px;flex-shrink:0;background:#161b22;border-left:1px solid #30363d;
+                 min-height:calc(100vh - 90px);padding:10px 0}
+    .tasks-panel .panel-hdr{padding:6px 12px;font-size:11px;color:#8b949e;text-transform:uppercase;
+                            letter-spacing:1px;border-bottom:1px solid #30363d;margin-bottom:8px}
+    .task-btn{display:block;width:100%;text-align:left;background:none;border:none;
+              color:#c9d1d9;font-family:inherit;font-size:13px;padding:6px 12px;cursor:pointer;
+              border-left:3px solid transparent;transition:background .15s}
+    .task-btn:hover{background:#21262d;color:#58a6ff}
+    .task-btn.running{border-left-color:#3fb950;color:#3fb950;background:#0d2a13}
+    .task-step{font-size:11px;color:#6e7681;padding:3px 12px 6px 15px;word-break:break-word;line-height:1.4}
+    .task-cancel{display:none;width:calc(100% - 24px);margin:4px 12px;background:#3d1f1f;border:1px solid #f85149;
+                 color:#f85149;font-family:inherit;font-size:12px;padding:4px 8px;border-radius:4px;cursor:pointer}
+    .task-cancel:hover{background:#f85149;color:#fff}
     .title{font-size:18px;font-weight:bold;color:#58a6ff}
     .status-badge{padding:4px 12px;border-radius:12px;font-size:12px;background:#21262d;color:#8b949e}
     .status-badge.listening{background:#1f2d1f;color:#3fb950}
@@ -46,7 +60,7 @@ _HTML = """<!DOCTYPE html>
                    background:#8b949e;border-radius:50%;transition:.3s}
     input:checked+.slider{background:#f85149}
     input:checked+.slider:before{transform:translateX(20px);background:#fff}
-    main{padding:16px;display:flex;flex-direction:column;gap:14px;max-width:860px;margin:0 auto}
+    .main-col{flex:1;min-width:0;padding:16px;display:flex;flex-direction:column;gap:14px;max-width:860px}
     .banner{color:#f85149;text-align:center;padding:6px;font-size:12px;display:none}
     .card{background:#161b22;border:1px solid #30363d;border-radius:8px;overflow:hidden}
     .card-hdr{padding:6px 12px;background:#21262d;font-size:11px;color:#8b949e;
@@ -95,7 +109,8 @@ _HTML = """<!DOCTYPE html>
   <span class="sep">|</span>
   <span id="weather">fetching weather...</span>
 </div>
-<main>
+<div class="page-wrap">
+<div class="main-col">
   <div id="banner" class="banner">&#x26A0; Disconnected — reconnecting...</div>
 
   <div class="card">
@@ -125,7 +140,14 @@ _HTML = """<!DOCTYPE html>
     <div class="card-hdr">Live Log</div>
     <div id="log" class="log-box"></div>
   </div>
-</main>
+</div>
+
+<div class="tasks-panel" id="tasksPanel">
+  <div class="panel-hdr">&#x25B6; Tasks</div>
+  <div id="taskList"><!-- populated by /api/tasks --></div>
+  <button class="task-cancel" id="cancelBtn" onclick="cancelTask()">&#x25FC; Cancel</button>
+</div>
+</div>
 <script>
   let ws, reconnTimer;
 
@@ -171,6 +193,9 @@ _HTML = """<!DOCTYPE html>
           break;
         case 'tts_mute':
           document.getElementById('muteToggle').checked = d.muted;
+          break;
+        case 'task_update':
+          handleTaskUpdate(d);
           break;
       }
     };
@@ -240,6 +265,70 @@ _HTML = """<!DOCTYPE html>
   setInterval(fetchWeather, 600000);
 
   connect();
+
+  // ---- Tasks panel ----
+  let runningTask = null;
+
+  async function loadTasks() {
+    try {
+      const r = await fetch('/api/tasks');
+      if (!r.ok) return;
+      const data = await r.json();
+      renderTasks(data.tasks || []);
+    } catch(e) {}
+  }
+
+  function renderTasks(tasks) {
+    const el = document.getElementById('taskList');
+    el.innerHTML = '';
+    if (!tasks.length) {
+      el.innerHTML = '<div style="padding:8px 12px;color:#6e7681;font-size:12px">No tasks found</div>';
+      return;
+    }
+    tasks.forEach(name => {
+      const btn = document.createElement('button');
+      btn.className = 'task-btn';
+      btn.id = 'task-' + name;
+      btn.textContent = name;
+      btn.onclick = () => runTask(name);
+      el.appendChild(btn);
+      const step = document.createElement('div');
+      step.className = 'task-step';
+      step.id = 'step-' + name;
+      el.appendChild(step);
+    });
+  }
+
+  function runTask(name) {
+    if (ws && ws.readyState === 1)
+      ws.send(JSON.stringify({type: 'run_task', name}));
+  }
+
+  function cancelTask() {
+    if (ws && ws.readyState === 1)
+      ws.send(JSON.stringify({type: 'cancel_task'}));
+  }
+
+  function handleTaskUpdate(d) {
+    const {task, step, running} = d;
+    // Clear previous running state
+    if (runningTask && runningTask !== task) {
+      const prev = document.getElementById('task-' + runningTask);
+      const prevStep = document.getElementById('step-' + runningTask);
+      if (prev) prev.classList.remove('running');
+      if (prevStep) prevStep.textContent = '';
+    }
+    runningTask = running ? task : null;
+    const btn = document.getElementById('task-' + task);
+    const stepEl = document.getElementById('step-' + task);
+    if (btn) btn.classList.toggle('running', running);
+    if (stepEl) stepEl.textContent = running ? step : '';
+    const cancelBtn = document.getElementById('cancelBtn');
+    if (cancelBtn) cancelBtn.style.display = running ? 'block' : 'none';
+    addLog((running ? 'TASK  ' : 'TASK  ') + task + '  ' + step, 'intent');
+  }
+
+  loadTasks();
 </script>
 </body>
 </html>"""
@@ -303,6 +392,13 @@ class WebServer:
                 asyncio.create_task(self._voice_server.handle_text_command(text))
             return {"status": "ok"}
 
+        @app.get("/api/tasks")
+        async def api_tasks():
+            tasks = []
+            if self._voice_server and self._voice_server._task_runner:
+                tasks = self._voice_server._task_runner.list_tasks()
+            return {"tasks": tasks}
+
         @app.post("/api/tts_mute")
         async def api_tts_mute(body: dict[str, Any]):
             self._tts_muted = bool(body.get("muted", False))
@@ -339,6 +435,17 @@ class WebServer:
                             asyncio.create_task(
                                 self._voice_server.handle_text_command(text)
                             )
+                    elif msg.get("type") == "run_task":
+                        name = msg.get("name", "").strip()
+                        tr = (self._voice_server and
+                              self._voice_server._task_runner)
+                        if name and tr:
+                            asyncio.create_task(tr.run_task(name))
+                    elif msg.get("type") == "cancel_task":
+                        tr = (self._voice_server and
+                              self._voice_server._task_runner)
+                        if tr:
+                            tr.cancel()
                     elif msg.get("type") == "set_tts_mute":
                         self._tts_muted = bool(msg.get("muted", False))
                         await self.broadcast(

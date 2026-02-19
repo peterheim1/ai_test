@@ -126,6 +126,25 @@ intents:
         extract_from: "match_group_1"
     response: null
 
+  run_task:
+    priority: 12
+    patterns:
+      - "(?:run|execute|start|play)\\s+task\\s+(\\w+)"
+      - "run\\s+(\\w+)\\s+task"
+      - "(?:do|perform)\\s+(?:the\\s+)?(\\w+)\\s+task"
+    params:
+      task_name:
+        extract_from: "match_group_1"
+    response: "running task {task_name}"
+
+  list_tasks:
+    priority: 13
+    patterns:
+      - "(?:list|show|what)\\s+tasks?"
+      - "what\\s+tasks?\\s+(?:are\\s+there|can\\s+(?:you|i)\\s+run)"
+    params: {}
+    response: null
+
   general_question:
     priority: 98
     detect_as_question: true

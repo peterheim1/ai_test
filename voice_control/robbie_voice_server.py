@@ -29,6 +29,7 @@ from voice_control.llm_client import LLMClient
 from voice_control.ros2_dispatcher import ROS2Dispatcher
 from voice_control.stop_detector import StopDetector
 from voice_control.stt_engine import STTEngine
+from voice_control.task_runner import TaskRunner
 from voice_control.tts_engine import TTSEngine
 
 logging.basicConfig(level=logging.DEBUG, format="%(name)s: %(message)s")
@@ -57,6 +58,7 @@ class RobbieVoiceServer:
         self._llm: LLMClient | None = None
         self._classifier: IntentClassifier | None = None
         self._dispatcher: ROS2Dispatcher | None = None
+        self._task_runner: TaskRunner | None = None
         self._web = None
 
         # Config file paths
@@ -78,6 +80,10 @@ class RobbieVoiceServer:
         self._dispatcher = ROS2Dispatcher(
             node_name=ros2_cfg.get("node_name", "robbie_voice"),
             topic_config=ros2_cfg.get("topics", {}),
+        )
+        # Wire /voice/speak → TTS so external nodes can speak text
+        self._dispatcher.set_speak_callback(
+            self._speak, asyncio.get_event_loop()
         )
 
         # 2. STT engines (CUDA)
@@ -136,7 +142,23 @@ class RobbieVoiceServer:
         )
         self.console.log_info("Intent classifier loaded")
 
-        # 7. Audio input (local mic or TCP/ESP32)
+        # 7. Task runner
+        tasks_cfg = self.config.get("tasks", {})
+        tasks_dir = tasks_cfg.get("dir", "")
+        if tasks_dir:
+            self._task_runner = TaskRunner(
+                tasks_dir=tasks_dir,
+                locations_path=self._locations_path,
+                speak_fn=self._speak,
+                loop=asyncio.get_event_loop(),
+                status_fn=self._on_task_status,
+            )
+            task_names = self._task_runner.list_tasks()
+            self.console.log_info(
+                f"Task runner ready ({len(task_names)} tasks: {', '.join(task_names) or 'none'})"
+            )
+
+        # 9. Audio input (local mic or TCP/ESP32)
         audio_source = self.config.get("audio_source", "tcp")
         tcp_cfg = self.config.get("tcp_audio", {})
 
@@ -172,7 +194,7 @@ class RobbieVoiceServer:
         self._esphome.on_wake_word = self._on_wake_word
         await self._esphome.connect()
 
-        # 8. Web interface
+        # 10. Web interface
         web_cfg = self.config.get("web", {})
         if web_cfg.get("enabled", True):
             from voice_control.web_server import WebServer
@@ -185,6 +207,15 @@ class RobbieVoiceServer:
 
         self.console.log_info("Robbie Voice Server ready")
         self.console.log_end()
+
+    async def _on_task_status(self, name: str, step: str, running: bool):
+        """Broadcast task progress events to the web UI."""
+        await self.publish_event({
+            "type": "task_update",
+            "task": name,
+            "step": step,
+            "running": running,
+        })
 
     def _on_wake_word(self):
         """Called when ESP32 detects the wake word."""
@@ -284,6 +315,10 @@ class RobbieVoiceServer:
             "response": intent.response_text,
         })
 
+        # Cancel any running task on stop
+        if intent.name == "stop_all" and self._task_runner:
+            self._task_runner.cancel()
+
         # Dispatch to ROS 2
         self._dispatcher.publish_intent(intent)
         published_topics = [self._dispatcher._topic_names["intent"]]
@@ -334,6 +369,24 @@ class RobbieVoiceServer:
             return "Here are the active topics: " + ", ".join(
                 self._dispatcher.get_published_topics()
             )
+
+        if intent.name == "run_task":
+            task_name = intent.params.get("task_name", "").lower()
+            if not self._task_runner:
+                return "Task runner is not configured"
+            available = self._task_runner.list_tasks()
+            if task_name not in available:
+                return f"I don't have a task called {task_name}. Available tasks are: {', '.join(available)}"
+            asyncio.create_task(self._task_runner.run_task(task_name))
+            return None  # task_runner speaks its own confirmation
+
+        if intent.name == "list_tasks":
+            if not self._task_runner:
+                return "Task runner is not configured"
+            tasks = self._task_runner.list_tasks()
+            if not tasks:
+                return "I don't have any tasks loaded"
+            return "Available tasks are: " + ", ".join(tasks)
 
         return intent.response_text
 
@@ -397,6 +450,9 @@ class RobbieVoiceServer:
         self.console.log_info("Shutting down...")
         if self._esphome:
             await self._esphome.disconnect()
+        if self._task_runner:
+            self._task_runner.cancel()
+            self._task_runner.shutdown()
         if self._dispatcher:
             self._dispatcher.shutdown()
         self._executor.shutdown(wait=False)
