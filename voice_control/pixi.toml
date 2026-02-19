@@ -1,0 +1,21 @@
+[workspace]
+name = "robbie-voice-control"
+version = "0.1.0"
+description = "Voice control system for Robbie robot"
+channels = ["conda-forge"]
+platforms = ["linux-64"]
+
+[dependencies]
+python = ">=3.12,<3.13"
+pip = "*"
+setuptools = ">=68.0"
+
+[pypi-dependencies]
+platformio = ">=6.1.0"
+littlefs-python = ">=0.16.0"
+fatfs-ng = ">=0.1.14"
+
+[tasks]
+flash = { cmd = "pio run -t upload", cwd = "firmware" }
+monitor = { cmd = "pio device monitor", cwd = "firmware" }
+flash-monitor = { cmd = "pio run -t upload && pio device monitor", cwd = "firmware" }

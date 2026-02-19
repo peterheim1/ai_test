@@ -1,0 +1,32 @@
+# Robbie Voice Control - Named Navigation Locations
+
+locations:
+  charging_station:
+    x: 1.0
+    y: 0.0
+    yaw_deg: 0.0
+    aliases: ["charger", "charge", "charging", "charging station"]
+
+  foyer:
+    x: 3.7
+    y: 1.37
+    yaw_deg: 271.0
+    aliases: ["hallway", "entrance", "front door"]
+
+  tv:
+    x: -1.35
+    y: 3.17
+    yaw_deg: 87.89
+    aliases: ["television", "lounge", "living room"]
+
+  kitchen:
+    x: 2.16
+    y: 4.53
+    yaw_deg: 137.33
+    aliases: []
+
+  dining:
+    x: 4.10
+    y: 6.92
+    yaw_deg: 133.45
+    aliases: ["dining room", "dining table"]
