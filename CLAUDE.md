@@ -105,3 +105,9 @@ The `voice_control/` directory contains a complete voice pipeline for the robot.
 - Capture at 16kHz natively via sounddevice — do NOT resample manually
 - Pass raw int16 to openwakeword `predict()` — not float32
 - Block size 1024 samples, threshold 0.85
+
+## Janus Knowledge Base
+
+Before starting any new feature, run `git -C ~/janus pull` then follow the workflow in `~/janus/CLAUDE.md`.
+Say **"Janus session start"** to load current project state, **"Janus check: {topic}"** to search prior art,
+**"Janus start"** to run the start gate, **"Janus stop"** to run the stop gate.
